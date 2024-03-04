@@ -1,11 +1,13 @@
 
+
 library(tidyverse)
 library(terra)
 library(hypervolume)
 library(ggVennDiagram)
+library(alphahull)
+
 
 setwd("C:/MyFiles/R-dev/BeetleMods")
-
 
 
 ggVennDiagHvols <- function(hvRefs, hvCS, sp, vs, width = 5, height= 4, tl = 10000){
@@ -71,6 +73,22 @@ biplotHvol <- function(hv, sp, vs, colors = c('#e41a1c','#377eb8','#4daf4a'),
 }
 
 
+## ------------------------------------------------------------------------------ ##
+
+
+spNames <- c("LC" = "Lucanus cervus",
+             "LB" = "Lucanus barbarossa",
+             "DP" = "Dorcus parallelipipedus",
+             "PS" = "Platycerus spinifer")
+
+dt_sources_names <- c("ALL" = "All sources",
+                      "CTS" = "Citizen science",
+                      "REF" = "Other sources")
+
+
+## ------------------------------------------------------------------------------ ##
+
+
 ptb <- vect("./DATA/VECTOR/PT_caop2020_bounds_WGS84.shp")
 
 
@@ -106,41 +124,43 @@ climData[["BIO_18"]] <- (climData[["BIO_18"]] * 0.1)
 climData[["BIO_19"]] <- (climData[["BIO_19"]] * 0.1)
 
 
+## ------------------------------------------------------------------------------ ##
 
 
-bd <- read_csv("./DATA/TABLES/BD_VL_ARTIGO - TOTAL.csv") %>%  
+bd <- readxl::read_excel("./DATA/TABLES/BD_VL_ARTIGO2-2023_09_26-v2.xlsx", sheet = "TOTAL_v2") 
+
+bd <- bd %>%  
   select(-Source) %>% 
   rename(Species = Especie) %>% 
   rename(Source = Origem) %>% 
   rename(Year = ANO) %>% 
   rename(Lat = gps_latitude) %>% 
-  rename(Lon = gps_longitude)
+  rename(Lon = gps_longitude) %>% 
+  mutate(Lat = as.numeric(Lat)) %>% 
+  mutate(Lon = as.numeric(Lon))
 
-bdf <- bd %>% filter(Geoprivacy == "free", 
-                     
-                     Lat != "", 
-                     !is.na(Lat), 
-                     
-                     Lon != "", 
-                     !is.na(Lon)) %>% 
-  filter(Species %in% c("Lucanus cervus",
-                        "Lucanus barbarossa",
-                        "Dorcus parallelipipedus",
-                        "Platycerus spinifer"
-  ))
+bdf <- bd %>% filter(#Geoprivacy == "free", 
+  
+  Lat != "", 
+  !is.na(Lat), 
+  
+  Lon != "", 
+  !is.na(Lon)) %>% 
+  filter(Species %in% spNames)
 
 
 bds <- vect(bdf  %>% 
-                     select(Species
-                           ,Lon
-                           ,Lat
-                           ,Year
-                           ,Source), 
-            geom=c("Lon", "Lat"), 
-            crs="EPSG:4326", keepgeom=FALSE)
+              select(Species
+                     ,Lon
+                     ,Lat
+                     ,Year
+                     ,Source), 
+            geom = c("Lon", "Lat"), 
+            crs  = "EPSG:4326", keepgeom=FALSE)
 
 
 bds <- terra::intersect(bds, ptb)
+
 
 plot(bds)
 
@@ -148,11 +168,11 @@ bdClim <- extract(climData, bds) %>%
   bind_cols(bds %>% as.data.frame)
 
 
-bdSumm <- bdClim %>% 
-  group_by(Species, Year) %>% 
-  summarize(Count = n())
+## ------------------------------------------------------------------------------ ##
 
-vnames <- paste("BIO_",str_pad(c(3,4,7, 8,10,12,15,17,18), width = 2,pad = "0",side = "left"),sep="")
+
+vnames <- paste("BIO_",str_pad(c(3,4,7, 8,10,12,15,17,18), 
+                               width = 2,pad = "0",side = "left"),sep="")
 
 cm <- cor(na.omit(bdClim[,vnames], method="spearman"))
 
@@ -169,23 +189,21 @@ bind_cols(
   bdClim %>% select(all_of(vnames)) %>% scale
 )
 
-g <- ggplot(bdSumm,aes(x=Year, y=Count)) + 
-  geom_bar(stat="identity") + 
-  facet_wrap(Species~.) + 
-  scale_y_log10()
 
-plot(g)
-
+# bdSumm <- bdClim %>% 
+#   group_by(Species, Year) %>% 
+#   summarize(Count = n())
+#
+# g <- ggplot(bdSumm,aes(x=Year, y=Count)) + 
+#   geom_bar(stat="identity") + 
+#   facet_wrap(Species~.) + 
+#   scale_y_log10()
+# 
+# plot(g)
+# 
 
 
 ## -------------------------------------------------------------------------------- ##
-
-
-
-spNames <- c("Lucanus cervus",
-             "Lucanus barbarossa",
-             "Dorcus parallelipipedus",
-             "Platycerus spinifer")
 
 
 hvolsLists <- list()
@@ -195,7 +213,7 @@ for(sp in spNames){
   
   i<-i+1
   
-  outDir <- paste(getwd(),"/OUT/hvol_v3/",sp,sep="")
+  outDir <- paste(getwd(),"/OUT/hvol_v4/",sp,sep="")
   dir.create(outDir)
   
   bdSubsetRefs <- bdClim_scaled %>% 
@@ -214,7 +232,9 @@ for(sp in spNames){
     na.omit
   
   hvRefs <- hypervolume(bdSubsetRefs, method = "svm", verbose = FALSE, chunk.size = 10000)
+  
   hvCS <- hypervolume(bdSubsetCS, method = "svm", verbose = FALSE, chunk.size = 10000)
+  
   hvAll <- hypervolume(bdSubsetAll, method = "svm", verbose = FALSE, chunk.size = 10000)
   
   
@@ -242,7 +262,7 @@ for(sp in spNames){
   
   #hvolsLists[[i]] <- to_hv_list(outDir)
   
-  png(filename = paste("./OUT/",sp,"_hvols_v2.png",sep=""), width = 2800, height = 2300, res=300)
+  png(filename = paste("./OUT/",sp,"_hvols_v4.png",sep=""), width = 2800, height = 2300, res=300)
   plot(hv_list)
   dev.off()
   
@@ -287,7 +307,7 @@ for(sp in spNames){
           plot.background = element_rect(fill = 'white', color=NA))
   
   
-  ggsave(paste("./OUT/",sp,"_hvols_VennDiagram_v2.png",sep=""), ggv, width = 5, height= 4)
+  ggsave(paste("./OUT/",sp,"_hvols_VennDiagram_v4.png",sep=""), ggv, width = 5, height= 4)
   
   
   if(i==1){
@@ -303,6 +323,8 @@ for(sp in spNames){
 
 ## -----------------------------------------------------------------------------------------##
 
+
+
 sps <- c("Lucanus cervus",
          "Lucanus barbarossa",
          "Dorcus parallelipipedus",
@@ -315,10 +337,8 @@ dataSources <- rep(c("REFS","CTSC", "ALL"),4)
 
 hv_volumes <- data.frame(spName = spNames, dtSource = dataSources, hvol = NA)
 
-readr::write_csv(hv_volumes,"./OUT/hv_volumes_BySpecies&dataSource-v1.csv")
 
-
-hv_fn <- list.files("./OUT/hvol_v3/", pattern=".rds$", full.names = TRUE, recursive = TRUE)
+hv_fn <- list.files("./OUT/hvol_v4/", pattern=".rds$", full.names = TRUE, recursive = TRUE)
 
 hypervols <- list()
 
@@ -332,6 +352,13 @@ for(fn in hv_fn){
   hv_volumes[i,3] <- hv@Volume
   
 }
+
+
+readr::write_csv(hv_volumes,"./OUT/hv_volumes_BySpecies&dataSource-v1.csv")
+
+
+## -----------------------------------------------------------------------------------------##
+
 
 hv_lc <- hypervolume_join(hypervols[[1]][[1]],
                           hypervols[[1]][[2]],
@@ -349,65 +376,29 @@ hv_ps <- hypervolume_join(hypervols[[4]][[1]],
                           hypervols[[4]][[2]],
                           hypervols[[4]][[3]])
 
-#?plot.Hypervolume()
 
-# png(filename = paste("./OUT/HvolBiplot_",sps[1],"_hvols_v3.png",sep=""), width = 4000, height = 2700, res=300)
-# plot(hv_lc,
-#      colors = c("#EBE300", "#0058FA", "#49A32D"),
-#      #colors = c("yellow", "dark blue", "dark green"), 
-#      point.alpha.min=0.3, 
-#      point.dark.factor=0.4,
-#      cex.names=1.5,
-#      cex.legend=1.5,
-#      cex.data = 1.5,
-#      cax.random = 1.1,
-#      num.points.max.data = 1000, 
-#      num.points.max.random = 2000)
-# dev.off()
-
-biplotHvol(hv=hv_lc, sp=sps[1], vs=3.1, width = 4000, height = 2700, res=300)
-biplotHvol(hv=hv_lb, sp=sps[2], vs=3.1, width = 4000, height = 2700, res=300)
-biplotHvol(hv=hv_dp, sp=sps[3], vs=3.1, width = 4000, height = 2700, res=300)
-biplotHvol(hv=hv_ps, sp=sps[4], vs=3.1, width = 4000, height = 2700, res=300)
-
+biplotHvol(hv=hv_lc, sp=sps[1], vs=4, width = 4000, height = 2700, res=300)
+biplotHvol(hv=hv_lb, sp=sps[2], vs=4, width = 4000, height = 2700, res=300)
+biplotHvol(hv=hv_dp, sp=sps[3], vs=4, width = 4000, height = 2700, res=300)
+biplotHvol(hv=hv_ps, sp=sps[4], vs=4, width = 4000, height = 2700, res=300)
 
 
 ggVennDiagHvols(hypervols[[1]][[1]],
                 hypervols[[1]][[2]], 
-                sp = sps[1], vs=3, width = 6, height= 4, tl = 10000)
+                sp = sps[1], vs=4, width = 6, height= 4, tl = 10000)
 ggVennDiagHvols(hypervols[[2]][[1]],
                 hypervols[[2]][[2]], 
-                sp = sps[2], vs=3, width = 6, height= 4, tl = 10000)
+                sp = sps[2], vs=4, width = 6, height= 4, tl = 10000)
 ggVennDiagHvols(hypervols[[3]][[1]],
                 hypervols[[3]][[2]], 
-                sp = sps[3], vs=3, width = 6, height= 4, tl = 10000)
+                sp = sps[3], vs=4, width = 6, height= 4, tl = 10000)
 ggVennDiagHvols(hypervols[[4]][[1]],
                 hypervols[[4]][[2]], 
-                sp = sps[4], vs=3, width = 6, height= 4, tl = 10000)
-
+                sp = sps[4], vs=4, width = 6, height= 4, tl = 10000)
 
 
 ## -----------------------------------------------------------------------------------------##
 
-
-
-# outDF$DataType <- c("Other sources","Citizen science")
-# 
-# outDF$DataType <- factor(outDF$DataType, 
-#                          levels = c("Other sources","Citizen science"))
-# 
-# g <- ggplot(outDF,
-#             aes(y=svmHvol, x=DataType, fill=DataType)) + 
-#   geom_bar(stat="identity") +
-#   xlab("Data sources") + 
-#   ylab("Niche hypervolume size") +
-#   facet_wrap(spName~.) + 
-#   scale_fill_discrete(name="Data sources") +
-#   labs(title = "Niche hypervolume size by data source") + 
-#   theme_bw()
-# plot(g)
-# 
-# ggsave("./OUT/HVolSize_BeforeAfterCSdatacoll_v2.png",plot = g,width = 8,height = 8)
 
 hv_volumes <- readr::read_csv("./OUT/hv_volumes_BySpecies&dataSource-v1.csv")
 
@@ -428,6 +419,8 @@ hv_volumes <- hv_volumes %>% mutate(spName = forcats::fct_relevel(as.factor(spNa
                                          "P. spinifer"         = "Platycerus spinifer")) %>% 
   mutate(hvol_perc = (hvol / hv_all) * 100)
 
+
+## -----------------------------------------------------------------------------------------##
 
 
 g <- ggplot(hv_volumes,
