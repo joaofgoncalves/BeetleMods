@@ -6,9 +6,37 @@ library(biomod2)
 library(biomod2plus)
 
 
-
-
 setwd("C:/MyFiles/R-dev/BeetleMods")
+#setwd("D:/JG/BeetleMods")
+
+
+## ------------------------------------------------------------------------------ ##
+
+
+sp_idx <- 1
+
+working_dir <- "E:/R-dev/BeetleMods/OUT/mods"
+
+data_filter <- "All"
+# data_filter <- c("New","Published")      
+# data_filter <- "CitizenScience"
+
+
+##----------------------------------------------------------------------------------- ##
+
+
+spAcronym <- c("LC","LB","DP","PS")
+
+dataAcronym <- c("ALL","REF","REF","CTS")
+names(dataAcronym) <- c("All","New","Published","CitizenScience")
+
+working_dir <- paste0(working_dir,"/",dataAcronym[data_filter[1]],"_",spAcronym[sp_idx])
+
+if(!dir.exists(working_dir))
+  dir.create(working_dir)
+
+
+##----------------------------------------------------------------------------------- ##
 
 
 selVars <- readxl::read_excel("./DATA/TABLES/BMods_SelectedVariables-v1.xlsx",1)
@@ -46,8 +74,6 @@ modVars[["BIO_17"]] <- (modVars[["BIO_17"]] * 0.1)
 modVars[["BIO_18"]] <- (modVars[["BIO_18"]] * 0.1)
 modVars[["BIO_19"]] <- (modVars[["BIO_19"]] * 0.1)
 
-#plot(modVars[[1]])
-
 
 spNames <- c("Lucanus cervus",
              "Lucanus barbarossa",
@@ -55,14 +81,17 @@ spNames <- c("Lucanus cervus",
              "Platycerus spinifer")
 
 
-bd <- read_csv("./DATA/TABLES/BD_VL_ARTIGO - TOTAL.csv") %>%  
+bd <- readxl::read_excel("./DATA/TABLES/BD_VL_ARTIGO2-2023_09_26.xlsx", sheet = "TOTAL_v2") 
+
+bd <- bd %>%  
   select(-Source) %>% 
   rename(Species = Especie) %>% 
   rename(Source = Origem) %>% 
   rename(Year = ANO) %>% 
   rename(Lat = gps_latitude) %>% 
-  rename(Lon = gps_longitude)
-
+  rename(Lon = gps_longitude) %>% 
+  mutate(Lat = as.numeric(Lat)) %>% 
+  mutate(Lon = as.numeric(Lon))
 
 bdf <- bd %>% filter(Geoprivacy == "free", 
                      
@@ -80,16 +109,20 @@ bds <- vect(bdf  %>%
                      ,Lat
                      ,Year
                      ,Source), 
-            geom=c("Lon", "Lat"), 
-            crs="EPSG:4326", keepgeom=FALSE)
+            geom = c("Lon", "Lat"), 
+            crs  = "EPSG:4326", keepgeom=FALSE)
 
 
 bds <- terra::intersect(bds, ptb)
 
 
 
-#######################
-i = 3
+# //////////////////////////////////////////////////////////
+
+i = sp_idx
+
+# //////////////////////////////////////////////////////////
+
 
 projName <- "current"
 
@@ -104,7 +137,18 @@ modVarsDF <- extract(modVars, bds) %>%
   bind_cols(bds %>% as.data.frame) %>% 
   bind_cols(crds(bds) %>% as.data.frame)
 
-modSpDF <- modVarsDF %>% filter(Species == spName)
+
+## Filter by type of record ------------------------------- ##
+
+if(data_filter == "All"){
+  modSpDF <- modVarsDF %>% filter(Species == spName)
+}else{
+  modSpDF <- modVarsDF %>% 
+    filter(Species == spName, Source %in% data_filter)
+}
+
+##----------------------------------------------------------------------------------- ##
+
 
 xyData <- modSpDF %>% select(x, y)
 
@@ -122,8 +166,13 @@ extData <- as.data.frame(extData)
 print(nrow(extData))
 
 
+# //////////////////////////////////////////////////////////
 
-setwd("C:/MyFiles/R-dev/BeetleMods/OUT/mods/R01")
+# Change working directory to the one storing biomod2 data
+
+setwd(working_dir)
+
+# //////////////////////////////////////////////////////////
 
 
 modData <-
@@ -132,69 +181,64 @@ modData <-
     resp.name = spRespName,
     expl.var = modVars[[selVarsTargetSpecies]],
     resp.xy = extData,
-    PA.nb.rep = 10,
-    PA.nb.absences = 5000,
+    PA.nb.rep = 3,
+    PA.nb.absences = 10000,
     PA.strategy = "random")
 
 
 # Define some modelling options for available algorithms
-modOptions <- BIOMOD_ModelingOptions(GAM = list(k = 4),
-                                          MAXENT.Phillips = list(threshold=FALSE,
-                                                                 hinge=FALSE,
-                                                                 path_to_maxent.jar="C:/MyFiles/temp"), ## Change this too!!!!!!!
-                                          GBM = list(n.trees = 2500))
+# Define some modelling options for available algorithms
+modOptions <- BIOMOD_ModelingOptions(GAM = list(k = 2), ## Change this too!!!!!!!
+                                     GBM = list(n.trees = 2000))
 
-modObj <- BIOMOD_Modeling(bm.format  = modData,
-                          bm.options = modOptions,
-                          models     = c("GLM", "GBM", "GAM", "CTA", 
-                                         "ANN", "FDA", "MARS", "RF",
-                                         "MAXENT.Phillips.2"),
-                          nb.rep          = 10,
-                          data.split.perc = 80,
-                          do.full.models  = TRUE,
-                          var.import      = 5,
-                          metric.eval     = c("TSS", "ROC", "KAPPA"),
-                          save.output	    = TRUE,
-                          scale.models    = TRUE,
-                          do.progress     = TRUE)
-
+modObj <- BIOMOD_Modeling(bm.format       = modData,
+                          bm.options      = modOptions,
+                          
+                          models          = c("GLM", "GAM", "CTA", "ANN", 
+                                              "FDA", "MARS", "RF", "MAXNET", 
+                                              "XGBOOST"),
+                          
+                          CV.strategy     = "kfold",
+                          CV.nb.rep       = 1,
+                          CV.k            = 3,
+                          CV.do.full.models  = TRUE,
+                          prevalence         = 0.5, 
+                          var.import         = 5,
+                          metric.eval        = c("TSS", "ROC", "KAPPA", "ETS"),
+                          scale.models       = TRUE,
+                          do.progress        = TRUE)
 
 
 # Get model evaluation values
 myBiomodModelEval <- get_evaluations(modObj)
 
-# Print ROC scores
-print(myBiomodModelEval["ROC","Testing.data",,,])
-print(myBiomodModelEval["TSS","Testing.data",,,])
+write.csv(myBiomodModelEval, file = paste(getwd(),"/",spRespName,"/",spRespName,"_evalDF_all.csv",sep=""))
 
-# Get boxplot stats
-print(fivenum(as.numeric(myBiomodModelEval["ROC","Testing.data",,,])))
-print(fivenum(as.numeric(myBiomodModelEval["TSS","Testing.data",,,])))
+TSS <- myBiomodModelEval %>% filter(metric.eval == "TSS") %>% select(validation) %>% pull
+AUC <- myBiomodModelEval %>% filter(metric.eval == "ROC") %>% select(validation) %>% pull
 
-# Save evaluation metrics from the arrays
-evalDF.ROC <- as.data.frame(myBiomodModelEval["ROC","Testing.data",,,])
-evalDF.TSS <- as.data.frame(myBiomodModelEval["TSS","Testing.data",,,])
-evalDF.KAPPA <- as.data.frame(myBiomodModelEval["KAPPA","Testing.data",,,])
+cat("TSS validation average:", round(mean(TSS, na.rm=TRUE), 3))
+cat("AUC validation average:", round(mean(AUC, na.rm=TRUE), 3))
 
-write.csv(evalDF.ROC, file = paste(getwd(),"/",spRespName,"/",spRespName,"_evalDF_ROC.csv",sep=""))
-write.csv(evalDF.TSS, file = paste(getwd(),"/",spRespName,"/",spRespName,"_evalDF_TSS.csv",sep=""))
-write.csv(evalDF.KAPPA, file = paste(getwd(),"/",spRespName,"/",spRespName,"_evalDF_KAPPA.csv",sep=""))
+cat("TSS validation median:", round(median(TSS, na.rm=TRUE), 3))
+cat("AUC validation median:", round(median(AUC, na.rm=TRUE), 3))
 
 
+TSS_P75 = quantile(TSS, probs=0.75, na.rm=TRUE)
+AUC_P75 = quantile(AUC, probs=0.75, na.rm=TRUE)
 
-selMods <- twoStepBestModelSelection(biomodModelOut = modObj, 
-                                     evalMetric = "TSS", 
-                                     nrBestAlgos = 6, 
-                                     bestAlgoFun = stats::median, 
-                                     topFraction = 0.1)
+
+##----------------------------------------------------------------------------------- ##
 
 
 # Perform the ensemble of best models previously selected
 myBiomodEM <- BIOMOD_EnsembleModeling(bm.mod = modObj,
-                                      models.chosen = selMods,
+                                      #models.chosen = selMods,
                                       em.by = 'all',
-                                      prob.mean = TRUE,
-                                      prob.mean.weight.decay = 'proportional')
+                                      metric.select = "TSS",
+                                      metric.select.thresh = TSS_P75,
+                                      metric.select.dataset = "validation",
+                                      em.algo = "EMmean")
 
 # Get evaluation scores for the Ensemble Modeling stage
 emEvalDF <- as.data.frame(get_evaluations(myBiomodEM))
@@ -202,6 +246,10 @@ write.csv(emEvalDF, file = paste(getwd(),"/",spRespName,"/",spRespName,
                                  "_EnsMod_evalDF_AllMetrics.csv",sep=""))
 
 
+##----------------------------------------------------------------------------------- ##
+
+
+selMods <- myBiomodEM@em.models_kept
 
 myBiomodProj <- BIOMOD_Projection(bm.mod = modObj,
                                   new.env         = modVars[[selVarsTargetSpecies]],
@@ -210,26 +258,19 @@ myBiomodProj <- BIOMOD_Projection(bm.mod = modObj,
                                   compress        = 'gzip',
                                   build.clamping.mask = TRUE,
                                   on_0_1000           = TRUE,
-                                  output.format       = '.grd')
+                                  output.format       = '.tif')
+
+
+##----------------------------------------------------------------------------------- ##
+
 
 # Perform the ensembling of projections
 myBiomodEF <- BIOMOD_EnsembleForecasting(bm.em         = myBiomodEM,
                                          bm.proj       = myBiomodProj,
                                          metric.binary = 'TSS',
-                                         output.format = '.grd',
+                                         output.format = '.tif',
                                          on_0_1000     = TRUE,
                                          do.stack      = FALSE)
-
-
-# Convert all output raster files to GeoTIFF
-inFolder <- paste(getwd(),"/",spRespName,"/proj_",projName,sep="")
-inFolder2 <- paste(getwd(),"/",spRespName,"/proj_",projName,"/individual_projections",sep="")
-
-outFolder <- paste(inFolder,"/","GeoTIFF", sep="")
-dir.create(outFolder)
-
-convertToGeoTIFF(inFolder, outFolder)
-convertToGeoTIFF(inFolder2, outFolder)
 
 
 save.image(file = paste(spRespName,"_sessionBkp_v1.RData",sep=""))
